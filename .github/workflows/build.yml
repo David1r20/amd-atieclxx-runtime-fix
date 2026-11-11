@@ -1,4 +1,4 @@
-name: Build Windows GUI installer (beta)
+name: Build portable native Windows app (beta)
 on:
   push:
     branches: [main]
@@ -8,26 +8,24 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  build-native:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '8.0.x'
-      - name: Compile monitor and self-contained GUI
+      - name: Compile native Win64 app
         shell: pwsh
-        run: ./scripts/build.ps1
-      - name: Verify executable
+        run: ./native/Build.ps1
+      - name: Verify portable executable and hash
         shell: pwsh
         run: |
-          if (!(Test-Path 'dist/AMD-atieclxx-Fix-Setup.exe')) {
-            throw 'GUI executable was not generated'
-          }
-          Get-FileHash 'dist/AMD-atieclxx-Fix-Setup.exe' -Algorithm SHA256
+          $exe = 'dist-native/AMD-atieclxx-Fix-Native.exe'
+          if (!(Test-Path $exe)) { throw 'Native executable not generated' }
+          $size = (Get-Item $exe).Length
+          if ($size -gt 5MB) { throw "Native output is unexpectedly large: $size" }
+          Get-FileHash $exe -Algorithm SHA256
       - uses: actions/upload-artifact@v4
         with:
-          name: amd-atieclxx-setup-beta-win-x64
-          path: dist/AMD-atieclxx-Fix-Setup.exe
+          name: AMD-atieclxx-Fix-Native-beta-win-x64
+          path: dist-native/AMD-atieclxx-Fix-Native.exe
           if-no-files-found: error
           retention-days: 14

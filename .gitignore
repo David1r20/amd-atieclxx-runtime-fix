@@ -35,3 +35,8 @@ amdkmpfd.sys
 **/original_stack*
 **/checkpoint*
 *.local.*
+
+# Native outputs
+dist-native/
+native/out/
+native/*.obj
