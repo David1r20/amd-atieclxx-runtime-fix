@@ -68,3 +68,12 @@ Se a ativação falhar, o aplicativo tenta encerrar e remover a tarefa e parar/d
 - [Compilação Windows x64](../native/Build.ps1)
 - [Resultados dos testes](TESTS.md)
 - [Segurança e recuperação](SECURITY.md)
+
+
+## Confirmação entre interface e monitor
+
+A aplicação da alteração em RAM ocorre no monitor registrado como `SYSTEM`. Ao encontrar um novo processo `atieclxx.exe` compatível, o monitor verifica os bytes do código e grava uma confirmação vinculada ao PID no arquivo `C:\ProgramData\AMDAtieclxxNativeFix\watch_state.txt`.
+
+A ativação iniciada pela interface aguarda esse sinal do monitor, valida a taxa de escrita do processo e verifica que o serviço e a tarefa continuam em execução. A interface **não precisa** abrir o processo AMD para modificar sua memória. Se o monitor não confirmar a correção, a ativação falha e restaura o estado seguro de serviço desativado.
+
+O arquivo de confirmação é um mecanismo local de coordenação; ele não substitui a validação do hash, dos opcodes nem dos contadores de I/O.

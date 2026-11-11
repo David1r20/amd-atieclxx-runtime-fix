@@ -48,3 +48,12 @@ Saída: `dist-native\AMD-atieclxx-Fix-Native.exe`. O executável validado ocupa 
 O executável registra em `C:\ProgramData\AMDAtieclxxNativeFix\activation.log` o estágio de ativação e um código de falha. O aplicativo apresenta um erro específico quando o monitor não inicia, o serviço AMD não fica pronto, a escrita em RAM falha ou a redução de I/O não é confirmada.
 
 A cópia do próprio executável é ignorada quando a origem já é o caminho instalado em `Program Files`. A rotina foi testada em ativação direta a partir desse caminho.
+
+
+## Confirmação do patch pelo monitor SYSTEM
+
+A interface elevada não tenta mais escrever diretamente na memória do cliente AMD. O monitor que executa sob `SYSTEM` confirma o patch depois de verificar os bytes do processo e registra `PID, estado, erro e PID do monitor` em `C:\ProgramData\AMDAtieclxxNativeFix\watch_state.txt`.
+
+Na ativação, o aplicativo aguarda a confirmação do PID atual. Somente depois mede o I/O do processo e confirma o estado do serviço e da tarefa. Falhas provocam reversão conservadora. Isso evita que restrições de acesso da interface administrativa interrompam uma correção aplicada corretamente pelo monitor SYSTEM.
+
+Validação: ativação com serviço inicialmente desativado, zero bytes de escrita em dez segundos, reinício do serviço com novo PID confirmado e zero bytes de escrita em mais oito segundos.

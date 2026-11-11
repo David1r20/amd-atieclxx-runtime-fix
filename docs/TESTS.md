@@ -69,3 +69,18 @@ A escrita total do disco inclui outros processos. Sua diferença em relação à
 - Rastreamentos ETW brutos e dados locais não são publicados por poderem conter caminhos e identificadores do computador.
 
 Os detalhes da implementação estão em [Arquitetura técnica](ARCHITECTURE.md).
+
+
+## Validação da correção do erro 20 (acesso negado)
+
+Em 11/11/2026, uma ativação retornou código 20 e erro Win32 5 (`Access denied`). A versão anterior fazia a interface administrativa chamar diretamente a rotina de modificação da memória. A implementação atual delega a alteração ao monitor `SYSTEM` e aguarda sua confirmação.
+
+Testes na mesma máquina:
+
+- Serviço AMD inicialmente `Stopped / Disabled` e sem tarefa nativa: ativação concluída, tarefa e serviço `Running`, confirmação de patch vinculada ao PID `20932`.
+- Processo corrigido escreveu **0 bytes em dez segundos**.
+- Após reiniciar o serviço AMD, o monitor confirmou a correção do novo PID `17724`.
+- O novo processo escreveu **0 bytes adicionais em oito segundos**, com serviço e tarefa ainda `Running`.
+- A assinatura e o SHA-256 do executável original permaneceram inalterados.
+
+A causa exata da falha na chamada anterior não foi isolada por API, mas o erro registrado foi de acesso negado e o novo fluxo elimina a necessidade de modificação pela interface.

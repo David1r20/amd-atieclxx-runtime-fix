@@ -263,14 +263,50 @@ static bool Apply(){
  if(!st.supported||!st.pid)return false;
  bool already=false;return PatchPID(st.pid,already);
 }
+// Acknowledgement from the SYSTEM watcher. The GUI/installer only reads it;
+// the actual modification of the AMD client is performed by the SYSTEM task.
+// Status: 0 waiting, 1 pending, 2 byte-verified patch, 3 patch failed, 4 unsupported SHA.
+static std::wstring WatchStatusPath(){
+ wchar_t folder[32768]{};
+ DWORD len=GetEnvironmentVariableW(L"ProgramData",folder,32768);
+ if(!len||len>=32768)return L"";
+ std::wstring dir=std::wstring(folder)+L"\\AMDAtieclxxNativeFix";
+ CreateDirectoryW(dir.c_str(),nullptr);
+ return dir+L"\\watch_state.txt";
+}
+static void WriteWatchStatus(DWORD pid,int status,DWORD error=0){
+ std::wstring path=WatchStatusPath();if(path.empty())return;
+ HANDLE h=CreateFileW(path.c_str(),GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,nullptr,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);
+ if(h==INVALID_HANDLE_VALUE)return;
+ char buf[128]{};
+ int len=sprintf_s(buf,"%lu %d %lu %lu\n",(unsigned long)pid,status,
+                   (unsigned long)error,(unsigned long)GetCurrentProcessId());
+ if(len>0){DWORD written=0;WriteFile(h,buf,(DWORD)len,&written,nullptr);}
+ FlushFileBuffers(h);CloseHandle(h);
+}
+static bool ReadWatchStatus(DWORD& pid,int& status,DWORD& error,DWORD& watcherPid){
+ std::wstring path=WatchStatusPath();if(path.empty())return false;
+ HANDLE h=CreateFileW(path.c_str(),GENERIC_READ,FILE_SHARE_READ|FILE_SHARE_WRITE,nullptr,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,nullptr);
+ if(h==INVALID_HANDLE_VALUE)return false;
+ char buf[128]{};DWORD got=0;BOOL ok=ReadFile(h,buf,sizeof(buf)-1,&got,nullptr);CloseHandle(h);
+ if(!ok||got==0)return false;buf[got]=0;
+ return sscanf_s(buf,"%lu %d %lu %lu",&pid,&status,&error,&watcherPid)==4;
+}
+static void ClearWatchStatus(){
+ std::wstring path=WatchStatusPath();if(!path.empty())DeleteFileW(path.c_str());
+}
 static bool Watch(){
  HANDLE mutex=CreateMutexW(nullptr,TRUE,WATCH_MUTEX);
  if(!mutex)return false;
  if(GetLastError()==ERROR_ALREADY_EXISTS){CloseHandle(mutex);return false;}
  DWORD lastPid=0;int attempts=0;std::wstring hash;
+ WriteWatchStatus(0,0);
  while(true){
   DWORD pid=FindPID(L"atieclxx.exe");
-  if(pid!=lastPid){lastPid=pid;attempts=0;hash=L"";}
+  if(pid!=lastPid){
+   lastPid=pid;attempts=0;hash=L"";
+   WriteWatchStatus(pid,pid?1:0);
+  }
   if(pid&&attempts<6){
    if(hash.empty()){
     std::wstring path=ServiceBinary();
@@ -278,8 +314,17 @@ static bool Watch(){
     hash=Sha256(path);
    }
    if(_wcsicmp(hash.c_str(),EXPECTED_HASH)==0){
-    bool already=false;if(PatchPID(pid,already))attempts=6;else attempts++;
-   }else attempts=6; // Unsupported SHA: do not patch.
+    bool already=false;
+    if(PatchPID(pid,already)){
+     WriteWatchStatus(pid,2,0);attempts=6;
+    }else{
+     DWORD winerr=GetLastError();
+     attempts++;
+     if(attempts>=6)WriteWatchStatus(pid,3,winerr);
+    }
+   }else{
+    WriteWatchStatus(pid,4,0);attempts=6;
+   }
   }
   Sleep(300);
  }
@@ -353,6 +398,7 @@ static const wchar_t* ActivationErrorText(int code){
  case 22:return L"O processo AMD continuou gravando acima do limite após o patch.";
  case 23:return L"O serviço AMD ou o processo parou durante a validação.";
  case 24:return L"Falha ao confirmar o monitor após a ativação.";
+ case 26:return L"O monitor SYSTEM não confirmou o patch dentro do tempo esperado.";
  default:return L"Ativação não concluída. Consulte o relatório técnico.";
  }
 }
@@ -378,6 +424,7 @@ static bool EnableProtection(){
  if(!QueryServiceState(priorRunning,priorMode)){
   FailActivation(14,L"query_service",GetLastError());return false;
  }
+ ClearWatchStatus();
  std::wstring cmd=L"/Create /SC ONSTART /TN \""+std::wstring(TASK)+L"\" /TR \"\\\""+dest+L"\\\" --watch\" /RU SYSTEM /RL HIGHEST /F";
  if(!RunTool(SystemTool(),cmd,15000)){
   FailActivation(15,L"create_startup_task",GetLastError());return false;
@@ -400,7 +447,24 @@ static bool EnableProtection(){
    Sleep(150);
   }
   if(!serviceReady||!pid){FailActivation(19,L"service_or_client_not_ready",GetLastError());break;}
-  if(!Apply()){FailActivation(20,L"memory_patch_failed",GetLastError());break;}
+  // An elevated interactive process can be denied VM_WRITE access to AMD's client.
+  // Only the SYSTEM watcher patches memory; wait for its byte-verified acknowledgement.
+  bool patchConfirmed=false,patchFailed=false;
+  DWORD statusPid=0,statusError=0,statusWatcher=0;
+  int statusCode=0;
+  for(int i=0;i<60;i++){
+   if(ReadWatchStatus(statusPid,statusCode,statusError,statusWatcher)&&statusPid==pid){
+    if(statusCode==2){patchConfirmed=true;break;}
+    if(statusCode==3||statusCode==4){patchFailed=true;break;}
+   }
+   Sleep(200);
+  }
+  if(!patchConfirmed){
+   FailActivation(patchFailed?20:26,
+       patchFailed?L"system_watcher_patch_failed":L"system_watcher_ack_timeout",
+       patchFailed?statusError:0);
+   break;
+  }
   double a=0,b=0;bool dm=false;
   if(!Measure(pid,2500,a,b,dm)){FailActivation(21,L"measure_AMD_IO_failed",GetLastError());break;}
   if(a>0.15){FailActivation(22,L"write_rate_still_high",0);break;}
@@ -418,6 +482,7 @@ static bool EnableProtection(){
   RunTool(SystemTool(),L"/End /TN \""+std::wstring(TASK)+L"\"",6000);
   RunTool(SystemTool(),L"/Delete /TN \""+std::wstring(TASK)+L"\" /F",6000);
   StopAMD();SetStart(SERVICE_DISABLED);
+  ClearWatchStatus();
   RecordActivation(L"rollback_finished",gActivationCode);
  }else{
   gActivationCode=0;RecordActivation(L"activation_verified",0);
@@ -429,6 +494,7 @@ static bool DisableProtection(){
  RunTool(SystemTool(),L"/End /TN \""+std::wstring(TASK)+L"\"",6000);
  RunTool(SystemTool(),L"/Delete /TN \""+std::wstring(TASK)+L"\" /F",6000);
  bool ok=StopAMD()&&SetStart(SERVICE_DISABLED);
+ ClearWatchStatus();
  return ok; // Keep native exe and logs; no Windows uninstaller needed.
 }
 static bool TemporaryTest(double& pRate,double& dRate,bool& dMeasured){

@@ -135,3 +135,10 @@ O aplicativo desfaz a tentativa e indica **qual etapa falhou**, com um código d
 `C:\ProgramData\AMDAtieclxxNativeFix\activation.log`
 
 Esse arquivo registra a etapa da ativação e eventuais códigos do Windows; não substitui a verificação do estado real do serviço. Se a proteção não for confirmada, o programa tenta interromper e desativar o serviço AMD para evitar novas gravações sem correção.
+
+
+### Confirmação da proteção pelo monitor
+
+A alteração em memória é executada pelo monitor iniciado como `SYSTEM`. A interface aguarda sua confirmação para o PID exato do `atieclxx.exe` antes de verificar a taxa de gravações e informar que a proteção está ativa.
+
+O arquivo `C:\ProgramData\AMDAtieclxxNativeFix\watch_state.txt` registra o PID e o estado dessa confirmação. O registro `activation.log` continua identificando a etapa de eventuais falhas.

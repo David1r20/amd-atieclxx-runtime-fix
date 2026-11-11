@@ -58,3 +58,10 @@ Esses comandos mantêm o serviço AMD desativado. A reativação manual do servi
 O repositório inclui somente o código da ferramenta e a documentação. Não devem ser enviados arquivos proprietários da AMD, executáveis alterados, dumps de memória, rastreamentos ETW com dados locais ou credenciais.
 
 Este é um projeto experimental independente, sem vínculo ou suporte oficial da AMD.
+
+
+## Responsabilidade da tarefa SYSTEM
+
+A interface só solicita a ativação e verifica o resultado. A escrita dos seis bytes no processo AMD fica reservada ao monitor `SYSTEM`. Um pequeno arquivo em `ProgramData` comunica o PID e a confirmação ao aplicativo; a taxa de I/O é medida separadamente antes de considerar a ativação bem-sucedida.
+
+Se o monitor não confirmar o patch, a ativação desfaz a tarefa e mantém o serviço AMD desativado para evitar que o comportamento original prossiga sem proteção.
