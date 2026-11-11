@@ -126,3 +126,12 @@ O código principal está em [`native/main.cpp`](native/main.cpp), incluindo int
 - O aplicativo não inclui nem redistribui executáveis proprietários da AMD.
 
 Para detalhes de implementação e recuperação, consulte [Arquitetura técnica](docs/ARCHITECTURE.md) e [Segurança](docs/SECURITY.md).
+
+
+### Se a ativação falhar
+
+O aplicativo desfaz a tentativa e indica **qual etapa falhou**, com um código de diagnóstico. O registro técnico fica em:
+
+`C:\ProgramData\AMDAtieclxxNativeFix\activation.log`
+
+Esse arquivo registra a etapa da ativação e eventuais códigos do Windows; não substitui a verificação do estado real do serviço. Se a proteção não for confirmada, o programa tenta interromper e desativar o serviço AMD para evitar novas gravações sem correção.

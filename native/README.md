@@ -41,3 +41,10 @@ Saída: `dist-native\AMD-atieclxx-Fix-Native.exe`. O executável validado ocupa 
 - [Arquitetura e tratamento do patch](../docs/ARCHITECTURE.md)
 - [Medições e testes](../docs/TESTS.md)
 - [Segurança e recuperação](../docs/SECURITY.md)
+
+
+## Diagnóstico de falhas de ativação
+
+O executável registra em `C:\ProgramData\AMDAtieclxxNativeFix\activation.log` o estágio de ativação e um código de falha. O aplicativo apresenta um erro específico quando o monitor não inicia, o serviço AMD não fica pronto, a escrita em RAM falha ou a redução de I/O não é confirmada.
+
+A cópia do próprio executável é ignorada quando a origem já é o caminho instalado em `Program Files`. A rotina foi testada em ativação direta a partir desse caminho.

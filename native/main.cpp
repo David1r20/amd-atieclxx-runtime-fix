@@ -313,23 +313,83 @@ static bool IsAdmin(){
   CheckTokenMembership(nullptr,sid,&admin);FreeSid(sid);
  }return admin!=0;
 }
+// Activation stages have distinct codes so the UI never hides the cause of failure.
+// Diagnostic log contains only step names and Win32 error numbers, not user paths.
+static int gActivationCode=1;
+static void RecordActivation(const wchar_t* stage, int status, DWORD winerr=0){
+ wchar_t dir[32768]{};
+ if(!GetEnvironmentVariableW(L"ProgramData",dir,32768))return;
+ std::wstring folder=std::wstring(dir)+L"\\AMDAtieclxxNativeFix";
+ CreateDirectoryW(folder.c_str(),nullptr);
+ std::wstring file=folder+L"\\activation.log";
+ HANDLE h=CreateFileW(file.c_str(),FILE_APPEND_DATA,FILE_SHARE_READ|FILE_SHARE_WRITE,nullptr,OPEN_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);
+ if(h==INVALID_HANDLE_VALUE)return;
+ SYSTEMTIME t{};GetLocalTime(&t);
+ wchar_t line[512]{};
+ swprintf_s(line,L"%04u-%02u-%02u %02u:%02u:%02u pid=%lu code=%d winerr=%lu stage=%s\r\n",
+  t.wYear,t.wMonth,t.wDay,t.wHour,t.wMinute,t.wSecond,GetCurrentProcessId(),status,winerr,stage);
+ char utf8[1200]{};
+ int length=WideCharToMultiByte(CP_UTF8,0,line,-1,utf8,sizeof(utf8),nullptr,nullptr);
+ if(length>0){DWORD done=0;WriteFile(h,utf8,(DWORD)(length-1),&done,nullptr);}
+ CloseHandle(h);
+}
+static int FailActivation(int code,const wchar_t* step,DWORD winerr=GetLastError()){
+ gActivationCode=code;RecordActivation(step,code,winerr);return code;
+}
+static const wchar_t* ActivationErrorText(int code){
+ switch(code){
+ case 10:return L"Permissões insuficientes ou monitor já instalado.";
+ case 11:return L"Não foi possível validar o driver AMD compatível.";
+ case 12:return L"Falha ao preparar a pasta da aplicação.";
+ case 13:return L"Falha ao copiar o executável para Program Files.";
+ case 14:return L"Falha ao consultar o serviço AMD.";
+ case 15:return L"Falha ao criar a tarefa no Agendador do Windows.";
+ case 16:return L"A tarefa do monitor não iniciou corretamente.";
+ case 17:return L"Não foi possível configurar a inicialização do serviço AMD.";
+ case 18:return L"O serviço AMD recusou a inicialização.";
+ case 19:return L"O serviço AMD ou seu processo cliente não ficou pronto.";
+ case 20:return L"Falha na aplicação ou validação do patch de memória.";
+ case 21:return L"Não foi possível medir as gravações do processo.";
+ case 22:return L"O processo AMD continuou gravando acima do limite após o patch.";
+ case 23:return L"O serviço AMD ou o processo parou durante a validação.";
+ case 24:return L"Falha ao confirmar o monitor após a ativação.";
+ default:return L"Ativação não concluída. Consulte o relatório técnico.";
+ }
+}
 static bool EnableProtection(){
- if(!IsAdmin()||CheckLegacyMonitor()||TaskExists())return false;
- State st=Inspect(false);if(!st.supported)return false;
- std::wstring dir=InstalledDir(),dest=InstalledExe();if(dir.empty())return false;
- if(!CreateDirectoryW(dir.c_str(),nullptr)&&GetLastError()!=ERROR_ALREADY_EXISTS)return false;
- if(!CopyFileW(GetSelfPath().c_str(),dest.c_str(),FALSE))return false;
- bool priorRunning=false;DWORD priorMode=0;if(!QueryServiceState(priorRunning,priorMode))return false;
+ gActivationCode=1;
+ RecordActivation(L"begin",0);
+ if(!IsAdmin()||CheckLegacyMonitor()||TaskExists()||CheckOwnMonitor()){
+  FailActivation(10,L"privilege_or_existing_monitor",GetLastError());return false;
+ }
+ State st=Inspect(false);
+ if(!st.supported){FailActivation(11,L"unsupported_driver_or_signature",GetLastError());return false;}
+ std::wstring dir=InstalledDir(),dest=InstalledExe(),self=GetSelfPath();
+ if(dir.empty()||dest.empty()||(!CreateDirectoryW(dir.c_str(),nullptr)&&GetLastError()!=ERROR_ALREADY_EXISTS)){
+  FailActivation(12,L"prepare_install_dir",GetLastError());return false;
+ }
+ // Portable executable may also be launched from the same protected path.
+ if(_wcsicmp(self.c_str(),dest.c_str())!=0){
+  if(!CopyFileW(self.c_str(),dest.c_str(),FALSE)){
+   FailActivation(13,L"copy_executable",GetLastError());return false;
+  }
+ }
+ bool priorRunning=false;DWORD priorMode=0;
+ if(!QueryServiceState(priorRunning,priorMode)){
+  FailActivation(14,L"query_service",GetLastError());return false;
+ }
  std::wstring cmd=L"/Create /SC ONSTART /TN \""+std::wstring(TASK)+L"\" /TR \"\\\""+dest+L"\\\" --watch\" /RU SYSTEM /RL HIGHEST /F";
- bool taskCreated=RunTool(SystemTool(),cmd,15000);
- if(!taskCreated)return false;
+ if(!RunTool(SystemTool(),cmd,15000)){
+  FailActivation(15,L"create_startup_task",GetLastError());return false;
+ }
  bool ok=false;
  do{
-  if(!RunTool(SystemTool(),L"/Run /TN \""+std::wstring(TASK)+L"\"",10000))break;
+  if(!RunTool(SystemTool(),L"/Run /TN \""+std::wstring(TASK)+L"\"",10000)){
+   FailActivation(16,L"run_startup_task",GetLastError());break;
+  }
   Sleep(1100);
-  if(!SetStart(SERVICE_AUTO_START))break;
-  if(!StartAMD())break;
-  // Startup is asynchronous: do not mistake a slow AMD client start for patch failure.
+  if(!SetStart(SERVICE_AUTO_START)){FailActivation(17,L"set_service_automatic",GetLastError());break;}
+  if(!StartAMD()){FailActivation(18,L"start_AMD_service",GetLastError());break;}
   DWORD pid=0;
   bool serviceReady=false;
   for(int i=0;i<40;i++){
@@ -339,17 +399,28 @@ static bool EnableProtection(){
    if(serviceReady&&pid)break;
    Sleep(150);
   }
-  if(!serviceReady||!pid||!Apply())break;
+  if(!serviceReady||!pid){FailActivation(19,L"service_or_client_not_ready",GetLastError());break;}
+  if(!Apply()){FailActivation(20,L"memory_patch_failed",GetLastError());break;}
   double a=0,b=0;bool dm=false;
-  if(!Measure(pid,2500,a,b,dm)||a>0.15)break;
+  if(!Measure(pid,2500,a,b,dm)){FailActivation(21,L"measure_AMD_IO_failed",GetLastError());break;}
+  if(a>0.15){FailActivation(22,L"write_rate_still_high",0);break;}
   bool stillRunning=false;DWORD currentMode=0;
-  if(!QueryServiceState(stillRunning,currentMode)||!stillRunning||!FindPID(L"atieclxx.exe"))break;
+  if(!QueryServiceState(stillRunning,currentMode)||!stillRunning||!FindPID(L"atieclxx.exe")){
+   FailActivation(23,L"client_or_service_stopped_after_patch",GetLastError());break;
+  }
+  if(!TaskExists()){
+   FailActivation(24,L"task_missing_after_activation",GetLastError());break;
+  }
   ok=true;
  }while(false);
  if(!ok){
+  RecordActivation(L"rollback_start",gActivationCode);
   RunTool(SystemTool(),L"/End /TN \""+std::wstring(TASK)+L"\"",6000);
   RunTool(SystemTool(),L"/Delete /TN \""+std::wstring(TASK)+L"\" /F",6000);
-  StopAMD();SetStart(SERVICE_DISABLED); // Conservative fallback: do not leave an unpatched loop.
+  StopAMD();SetStart(SERVICE_DISABLED);
+  RecordActivation(L"rollback_finished",gActivationCode);
+ }else{
+  gActivationCode=0;RecordActivation(L"activation_verified",0);
  }
  return ok;
 }
@@ -437,13 +508,13 @@ static void StartWorker(bool temp){
  InvalidateRect(gWnd,nullptr,TRUE);
 }
 static int RunElevated(const std::wstring& cmd){
- if(IsAdmin())return cmd==L"--enable"?(EnableProtection()?0:1):cmd==L"--disable"?(DisableProtection()?0:1):1;
+ if(IsAdmin())return cmd==L"--enable"?(EnableProtection()?0:gActivationCode):cmd==L"--disable"?(DisableProtection()?0:1):1;
  std::wstring path=GetSelfPath();SHELLEXECUTEINFOW s{};s.cbSize=sizeof(s);s.fMask=SEE_MASK_NOCLOSEPROCESS;
  s.lpVerb=L"runas";s.lpFile=path.c_str();s.lpParameters=cmd.c_str();s.nShow=SW_HIDE;
  if(!ShellExecuteExW(&s))return 2;
  DWORD ret=WaitForSingleObject(s.hProcess,60000);
  DWORD exitCode=1;if(ret==WAIT_OBJECT_0)GetExitCodeProcess(s.hProcess,&exitCode);
- CloseHandle(s.hProcess);return exitCode==0?0:1;
+ CloseHandle(s.hProcess);return ret==WAIT_OBJECT_0?(int)exitCode:25;
 }
 static void PaintLabel(HDC dc,RECT rc,const std::wstring& text,HFONT font,COLORREF color,UINT flags=DT_LEFT|DT_SINGLELINE|DT_VCENTER){
  SelectObject(dc,font);SetTextColor(dc,color);SetBkMode(dc,TRANSPARENT);
@@ -595,7 +666,11 @@ static LRESULT CALLBACK WndProc(HWND w,UINT msg,WPARAM wp,LPARAM lp){
    }else if(LOWORD(wp)==ID_ENABLE){
     if(MessageBoxW(w,L"A ativação não exige executar o teste sem proteção.\n\nO programa iniciará o monitor, verificará o serviço AMD e medirá se a escrita repetitiva foi eliminada. Se falhar, interromperá o serviço por segurança.\n\nAtivar proteção?",L"Confirmação",MB_YESNO|MB_ICONWARNING)==IDYES){
      int result=RunElevated(L"--enable");
-     if(result!=0)MessageBoxW(w,L"A proteção não foi ativada. O serviço AMD pode permanecer parado para evitar gravações. Consulte o estado mostrado após a verificação.\n\nNenhum sucesso foi confirmado.",L"Ativação não concluída",MB_OK|MB_ICONWARNING);
+     if(result!=0){
+      std::wstring message=L"A proteção não foi ativada.\n\n"+std::wstring(ActivationErrorText(result))+
+       L"\n\nCódigo: "+std::to_wstring(result)+L". Detalhes em C:\\ProgramData\\AMDAtieclxxNativeFix\\activation.log";
+      MessageBoxW(w,message.c_str(),L"Ativação não concluída",MB_OK|MB_ICONWARNING);
+     }
      StartWorker(false);
     }
    }else if(LOWORD(wp)==ID_DISABLE){
@@ -639,7 +714,7 @@ int APIENTRY wWinMain(HINSTANCE h,HINSTANCE,LPWSTR args,int show){
  std::wstring arg=Trim(args);
  if(arg==L"--selftest-ui")return TestUiRules()?0:1;
  if(arg==L"--watch")return Watch()?0:1;
- if(arg==L"--enable")return EnableProtection()?0:1;
+ if(arg==L"--enable")return EnableProtection()?0:gActivationCode;
  if(arg==L"--disable")return DisableProtection()?0:1;
  if(arg==L"--once")return Apply()?0:1;
  if(arg.rfind(L"--temporary-test ",0)==0){
