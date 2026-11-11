@@ -1,51 +1,43 @@
-# Native portable edition
+# Implementação nativa
 
-This single executable combines the Win32 GUI, AMD driver identification, write-rate diagnosis, approved RAM-only patch, and opt-in background watcher. No conventional installer or managed runtime is required.
+O aplicativo é implementado em C++ com Win32/GDI e APIs do sistema Windows. O mesmo executável fornece a interface gráfica e o monitor que atua em segundo plano.
 
-## Meaning of the interface
+## Estrutura
 
-**Proteção ativa — serviço funcionando** is displayed only when the AMD service is running, its client process exists, the protection task/monitor is present and the measured AMD process write rate is below the abnormal threshold.
+- [`main.cpp`](main.cpp): identificação do cliente AMD, medições de I/O, correção em memória, monitor e interface.
+- [`Build.ps1`](Build.ps1): compilação da versão portátil para Windows x64.
 
-**Proteção indisponível — serviço parado** is displayed if a monitor is registered but the AMD service is stopped. This avoids presenting registration as successful runtime protection.
+## Funcionamento
 
-**Testar sem proteção** is shown only when the service is stopped and no monitor is installed. It deliberately measures the original behavior for about five seconds; the UI explains that these are historical results **without** the fix, then restores the original service state.
+**Identificação do cliente:** o programa consulta o serviço `AMD External Events Utility`, localiza `atiesrxx.exe` e o `atieclxx.exe` correspondente, confere a assinatura Authenticode, os metadados AMD e o hash SHA-256. Executáveis AMD com outros hashes podem ser analisados, mas não modificados.
 
-**Disco C: total** includes all writers on that disk; it is not solely AMD's disk usage.
+**Medição:** `GetProcessIoCounters` calcula o volume de escrita atribuído ao processo durante o intervalo. O PDH consulta a taxa de escrita total do disco físico que contém `C:`. Esses indicadores não representam a mesma coisa nem medem diretamente o desgaste da NAND.
 
-## Building
+**Correção:** o programa encontra a base carregada do módulo `atieclxx.exe` e soma o RVA `0x21122`. Somente se o hash e os seis bytes originais coincidirem com os valores validados, suspende o processo com `NtSuspendProcess`, modifica a página com `VirtualProtectEx`, escreve os novos bytes por `WriteProcessMemory`, limpa o cache de instruções com `FlushInstructionCache` e retoma a execução com `NtResumeProcess`. Não altera o arquivo no DriverStore.
 
-~~~powershell
+**Monitor automático:** quando o usuário ativa a proteção, o executável é copiado para `Program Files` e registrado em uma tarefa de inicialização do Windows, executada como `SYSTEM` com o argumento `--watch`. O monitor procura novas instâncias do processo e reaplica o patch nos binários suportados.
+
+**Verificação da ativação:** depois de iniciar o monitor e o serviço AMD, o programa confere se o processo foi corrigido e mede seu I/O. Se falhar, tenta excluir a tarefa de monitoramento e desativar o serviço AMD para evitar gravações recorrentes.
+
+**Teste sem proteção:** disponível apenas quando não há monitor e o serviço AMD está parado. Mediante confirmação, ativa o serviço por aproximadamente cinco segundos, registra as taxas e tenta devolver o serviço ao estado anterior.
+
+**Remoção:** encerra e exclui a tarefa de monitoramento; interrompe e desativa o serviço AMD. O executável previamente copiado para `Program Files` não é apagado automaticamente.
+
+## Compilação
+
+Na raiz do repositório:
+
+```powershell
 .\native\Build.ps1
-~~~
+```
 
-Requires Visual Studio C++ Build Tools and Windows SDK on the development machine. The executable is compiled with /MT; users do not need those tools.
+O ambiente de desenvolvimento precisa do Visual Studio C++ Build Tools e Windows SDK. A compilação utiliza `/MT` para vinculação estática do runtime C.
 
-## User-facing design
+Saída: `dist-native\AMD-atieclxx-Fix-Native.exe`. O executável validado ocupa aproximadamente 274 KB.
 
-The interface avoids technical marketing about implementation languages or dependencies. Its relevant messages concern SSD writes, the AMD service status, compatibility, whether protection is actually active, and how to remove it.
+## Documentação
 
-## Compatibility
-
-AMD vendor/signature verification allows diagnostics across different SHA-256 hashes. Memory modification is restricted to the exact supported SHA-256 and verified opcode at RVA 0x21122. Never bypass the version gate.
-
-## Validation performed
-
-- Win32 window created and captured successfully.
-- Same AMD process yielded 0 extra write bytes in short verified samples after applying the patch.
-- Native watcher restarted automatically for a new AMD process.
-- A direct activation test returned with AMD service Running/Auto and task Running.
-- The updated UI was compiled and deployed to the installed native watcher, followed by a seven-second zero-write confirmation.
-
-A full reboot, long sessions, other AMD versions and FreeSync/anti-cheat still require validation.
-
-## Source
-
-- main.cpp — Windows-native Win32 GUI, signed AMD identity check, I/O measurements, version-locked patch and scheduled background monitor.
-- Build.ps1 — standalone native x64 compiler script.
-
-The old WPF application under SetupGui remains historical, but is not the recommended community download.
-
-
-### Correção de UX — v0.4.1
-
-**Ativar proteção** fica disponível imediatamente em um driver com hash validado, com ou sem amostra de escrita. **Testar sem proteção** não é requisito nem etapa inicial obrigatória, evitando provocar gravações desnecessárias no SSD antes da correção. A ativação mantém sua própria verificação de segurança depois de iniciar o monitor.
+- [Visão geral e instruções de uso](../README.md)
+- [Arquitetura e tratamento do patch](../docs/ARCHITECTURE.md)
+- [Medições e testes](../docs/TESTS.md)
+- [Segurança e recuperação](../docs/SECURITY.md)
