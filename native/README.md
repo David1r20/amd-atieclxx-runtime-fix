@@ -44,3 +44,8 @@ A full reboot, long sessions, other AMD versions and FreeSync/anti-cheat still r
 - Build.ps1 — standalone native x64 compiler script.
 
 The old WPF application under SetupGui remains historical, but is not the recommended community download.
+
+
+### Correção de UX — v0.4.1
+
+**Ativar proteção** fica disponível imediatamente em um driver com hash validado, com ou sem amostra de escrita. **Testar sem proteção** não é requisito nem etapa inicial obrigatória, evitando provocar gravações desnecessárias no SSD antes da correção. A ativação mantém sua própria verificação de segurança depois de iniciar o monitor.

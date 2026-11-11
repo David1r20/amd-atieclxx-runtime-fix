@@ -473,7 +473,10 @@ static void PaintWindow(HDC dc,RECT client){
   title=L"Estado do serviço indisponível";detail=gState.message;tone=WARN;
  }else if(!gState.serviceRunning){
   title=gState.installed||gState.legacy?L"Proteção indisponível — serviço parado":L"Serviço AMD parado";
-  detail=gState.message;tone=WARN;
+  detail=(!gState.installed&&!gState.legacy&&gState.supported)
+    ?L"Você pode ativar a proteção agora. O teste sem proteção é opcional."
+    :gState.message;
+  tone=WARN;
  }else if(!gState.pid){
   title=L"Serviço em execução; cliente não detectado";detail=gState.message;tone=WARN;
  }else if(gState.legacy||gState.installed){
@@ -510,16 +513,42 @@ static void PaintWindow(HDC dc,RECT client){
  if(gWorking)PaintLabel(dc,{30,516,client.right-28,540},L"Leitura em andamento...",gFontSmall,WARN);
  else PaintLabel(dc,{30,516,client.right-28,540},L"Nenhum arquivo original do driver é substituído. Gravações totais incluem outros programas.",gFontSmall,MUTED);
 }
+// Showing activation must never depend on deliberately running the AMD client
+// without protection. EnableProtection() performs its own safety validation.
+static bool CanActivateProtection(const State& st){
+ return st.supported&&st.serviceKnown&&!st.installed&&!st.legacy;
+}
+static bool CanTemporaryDiagnose(const State& st){
+ return st.validAMD&&st.serviceKnown&&!st.serviceRunning&&!st.pid&&!st.legacy&&!st.installed;
+}
+static bool TestUiRules(){
+ State candidate;
+ candidate.validAMD=true;candidate.supported=true;candidate.serviceKnown=true;
+ candidate.serviceRunning=false;candidate.processMeasured=false;
+ if(!CanActivateProtection(candidate)||!CanTemporaryDiagnose(candidate))return false;
+ candidate.processMeasured=true;candidate.processMBps=0;
+ if(!CanActivateProtection(candidate))return false;
+ candidate.processMBps=0.75;
+ if(!CanActivateProtection(candidate))return false;
+ candidate.installed=true;
+ if(CanActivateProtection(candidate)||CanTemporaryDiagnose(candidate))return false;
+ candidate.installed=false;candidate.legacy=true;
+ if(CanActivateProtection(candidate)||CanTemporaryDiagnose(candidate))return false;
+ candidate.legacy=false;candidate.supported=false;
+ if(CanActivateProtection(candidate)||!CanTemporaryDiagnose(candidate))return false;
+ candidate.supported=true;candidate.serviceKnown=false;
+ if(CanActivateProtection(candidate))return false;
+ return true;
+}
 static void SetControls(){
  EnableWindow(gRefresh,!gWorking);
- bool canTest=!gWorking&&gState.validAMD&&gState.serviceKnown&&!gState.serviceRunning&&!gState.pid&&!gState.legacy&&!gState.installed;
+ bool canTest=!gWorking&&CanTemporaryDiagnose(gState);
  EnableWindow(gTest,canTest);
  ShowWindow(gTest,canTest?SW_SHOW:SW_HIDE);
- bool canEnable=!gWorking&&gState.supported&&!gState.installed&&!gState.legacy
-   &&gState.processMeasured&&gState.processMBps>=0.15;
+ bool canEnable=!gWorking&&CanActivateProtection(gState);
  EnableWindow(gEnable,canEnable);
  ShowWindow(gEnable,gState.installed||gState.legacy?SW_HIDE:SW_SHOW);
- bool canDisable=!gWorking&&(gState.installed);
+ bool canDisable=!gWorking&&gState.installed;
  EnableWindow(gDisable,canDisable);
  ShowWindow(gDisable,gState.installed?SW_SHOW:SW_HIDE);
 }
@@ -564,7 +593,7 @@ static LRESULT CALLBACK WndProc(HWND w,UINT msg,WPARAM wp,LPARAM lp){
    else if(LOWORD(wp)==ID_TEST){
     if(MessageBoxW(w,L"Este teste reproduz o funcionamento ORIGINAL, SEM proteção. Ele pode causar gravações no SSD durante cerca de cinco segundos.\n\nNão significa que a correção continua gravando. Depois, o serviço AMD voltará ao estado anterior.\n\nDeseja realizar o teste?",L"Teste temporário sem proteção",MB_YESNO|MB_ICONQUESTION)==IDYES)StartWorker(true);
    }else if(LOWORD(wp)==ID_ENABLE){
-    if(MessageBoxW(w,L"Esta correção experimental cria um monitor nativo como tarefa SYSTEM. O executável assinado da AMD não será alterado.\n\nAtivar proteção?",L"Confirmação",MB_YESNO|MB_ICONWARNING)==IDYES){
+    if(MessageBoxW(w,L"A ativação não exige executar o teste sem proteção.\n\nO programa iniciará o monitor, verificará o serviço AMD e medirá se a escrita repetitiva foi eliminada. Se falhar, interromperá o serviço por segurança.\n\nAtivar proteção?",L"Confirmação",MB_YESNO|MB_ICONWARNING)==IDYES){
      int result=RunElevated(L"--enable");
      if(result!=0)MessageBoxW(w,L"A proteção não foi ativada. O serviço AMD pode permanecer parado para evitar gravações. Consulte o estado mostrado após a verificação.\n\nNenhum sucesso foi confirmado.",L"Ativação não concluída",MB_OK|MB_ICONWARNING);
      StartWorker(false);
@@ -608,6 +637,7 @@ static int GUI(HINSTANCE h,int show){
 }
 int APIENTRY wWinMain(HINSTANCE h,HINSTANCE,LPWSTR args,int show){
  std::wstring arg=Trim(args);
+ if(arg==L"--selftest-ui")return TestUiRules()?0:1;
  if(arg==L"--watch")return Watch()?0:1;
  if(arg==L"--enable")return EnableProtection()?0:1;
  if(arg==L"--disable")return DisableProtection()?0:1;

@@ -79,3 +79,8 @@ See [native technical notes](native/README.md), [security](docs/SECURITY.md), an
 ## English summary
 
 A small, portable native Windows executable diagnoses repeated AMD atieclxx.exe disk writes. It can diagnose other verified AMD versions but patches one exact known binary version, in process memory only. The original AMD driver files remain untouched. The app can optionally register a background watcher and remove it again. Private experimental beta, not official AMD software.
+
+
+### Ativar sem teste prévio (beta 0.4.1)
+
+O botão **Ativar proteção** é habilitado assim que a assinatura, o SHA-256 suportado e o estado do serviço são identificados, sem exigir executar **Testar sem proteção**. A própria ativação realiza sua verificação pós-patch (serviço, monitor e I/O). Caso essa verificação falhe, a rotina interrompe e desativa o serviço para não deixar o loop original rodando sem proteção. O teste separado continua inteiramente opcional.
