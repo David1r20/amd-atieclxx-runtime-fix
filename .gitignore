@@ -1,0 +1,37 @@
+# SDK / IDE
+**/bin/
+**/obj/
+.vs/
+.idea/
+*.user
+*.suo
+
+# Generated releases and executables
+dist/
+artifacts/
+Releases/
+Distribution/payload/
+*.exe
+*.dll
+*.pdb
+*.zip
+*.msi
+*.msix
+*.etl
+*.dmp
+*.bmp
+*.png
+atieclxx.exe
+atiesrxx.exe
+amdkmpfd.sys
+
+# Machine diagnostics and private data
+**/status.json
+**/events.log
+**/installation.json
+**/scratch/
+**/raw*
+**/disassembly*
+**/original_stack*
+**/checkpoint*
+*.local.*

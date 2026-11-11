@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>AMD-atieclxx-Setup</AssemblyName>
+    <Version>0.3.2</Version>
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>true</SelfContained>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <DebugType>none</DebugType>
+  </PropertyGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="..\Distribution\Common.ps1" LogicalName="Fix.Common.ps1" />
+    <EmbeddedResource Include="..\Distribution\Check.ps1" LogicalName="Fix.Check.ps1" />
+    <EmbeddedResource Include="..\Distribution\Diagnostic.ps1" LogicalName="Fix.Diagnostic.ps1" />
+    <EmbeddedResource Include="..\Distribution\Install.ps1" LogicalName="Fix.Install.ps1" />
+    <EmbeddedResource Include="..\Distribution\Verify.ps1" LogicalName="Fix.Verify.ps1" />
+    <EmbeddedResource Include="..\Distribution\Uninstall.ps1" LogicalName="Fix.Uninstall.ps1" />
+    <EmbeddedResource Include="..\Distribution\payload\AmdAtieclxxRuntimeFix.exe" LogicalName="Fix.AmdAtieclxxRuntimeFix.exe" />
+  </ItemGroup>
+</Project>
