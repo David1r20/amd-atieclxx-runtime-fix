@@ -1,10 +1,20 @@
 # AMD atieclxx Fix
 
-**Ferramenta para diagnosticar e corrigir gravações repetitivas no SSD causadas pelo processo AMD External Events (`atieclxx.exe`) no Windows.**
+**Ferramenta para diagnosticar gravações repetitivas no SSD causadas pelo processo AMD External Events (`atieclxx.exe`) e corrigir versões antigas afetadas.**
 
 Em determinadas versões do driver Radeon, o `atieclxx.exe` copia repetidamente seu próprio executável para uma pasta de perfil do sistema. Identificamos a operação responsável e desenvolvemos uma correção que impede essa cópia **sem substituir os arquivos originais da AMD**.
 
-O aplicativo possui interface gráfica, é portátil e reúne diagnóstico, ativação, verificação e remoção da proteção.
+O aplicativo possui interface gráfica portátil para diagnóstico, proteção de versões antigas e recuperação do serviço após uma atualização oficial.
+
+## Situação dos drivers atuais
+
+A AMD corrigiu oficialmente o problema das gravações excessivas. O [Adrenalin 26.11.1](https://www.amd.com/en/resources/support-articles/release-notes/RN-RAD-WIN-26-11-1.html) contemplou RX 7000 e posteriores, e o [26.11.2 WHQL](https://www.amd.com/en/resources/support-articles/release-notes/RN-RAD-WIN-26-11-2.html) estendeu a correção a RX 5000/6000 no Windows 10.
+
+Na RX 9070 XT com o 26.11.2, o cliente `atieclxx.exe` foi medido **sem nosso patch**: 0 bytes escritos em 21,09 segundos. Depois de reativar o serviço AMD normalmente, permaneceu com 0 bytes em outra amostra de 15 segundos. A autocópia não se reproduziu nesse ensaio.
+
+**Nessa versão, o patch não é necessário.** Se o serviço AMD tiver sido desativado durante uma correção anterior, o aplicativo oferece **Restaurar serviço AMD**. Ele ativa o serviço sem patch, mede três amostras de cinco segundos e só mantém a inicialização automática se as verificações passarem.
+
+Outras versões assinadas da AMD podem ser diagnosticadas, mas apenas o SHA antigo já validado pode receber o patch em memória.
 
 ## O problema
 
@@ -45,7 +55,7 @@ Na versão validada, a instrução está no endereço relativo (**RVA**) `0x2112
 
 O endereço absoluto é calculado a partir da base do módulo carregado, considerando o ASLR do Windows. A rotina de aplicação suspende temporariamente o processo, confirma os bytes originais, altera a proteção da página, escreve a instrução, atualiza o cache de instruções e retoma a execução.
 
-O aplicativo e o monitor foram implementados em **C++ nativo, usando APIs do Windows**, em um único executável de aproximadamente **274 KB**.
+O aplicativo e o monitor foram implementados em **C++ nativo, usando APIs do Windows**, em um único executável de aproximadamente **300 KB**.
 
 ## Resultados
 
@@ -68,9 +78,9 @@ Essas medições foram feitas em um ambiente específico e não representam gara
 1. Acesse a página de [Releases](https://github.com/David1r20/amd-atieclxx-runtime-fix/releases) e baixe `AMD-atieclxx-Fix-Native.exe`.
 2. Abra o executável no Windows.
 3. Consulte o estado do serviço, a compatibilidade e as taxas de gravação mostradas na interface.
-4. Se o driver for compatível, clique em **Ativar proteção**. O teste sem proteção **não é obrigatório**.
-5. Confirme a solicitação de administrador do Windows. O aplicativo iniciará o monitor, aplicará a correção e verificará o resultado.
-6. Use **Verificar novamente** para consultar o estado atualizado. Para desativar, clique em **Remover proteção**.
+4. Se uma versão antiga afetada e validada for encontrada, clique em **Ativar proteção**; o teste prévio é opcional.
+5. No **26.11.2 reconhecido**, o patch é desnecessário. Caso o serviço esteja desativado, clique em **Restaurar serviço AMD** para iniciar e testar sem alterar a memória.
+6. Use **Verificar novamente** para conferir o resultado. O botão **Remover proteção** é reservado a um monitor anteriormente instalado.
 
 A ativação copia o próprio aplicativo para uma pasta protegida em `Program Files` e cria uma tarefa de inicialização do Windows executada como `SYSTEM`. Essa tarefa mantém o monitor em segundo plano e aplica o patch aos novos processos compatíveis. Não é necessário executar manualmente o programa a cada inicialização.
 
@@ -102,6 +112,12 @@ A identificação e o diagnóstico podem funcionar em **outros SHA-256 de execut
 | Arquitetura | Windows x64 |
 
 O modelo da GPU não é o critério de aplicação do patch. **Um executável com outro hash pode ser diagnosticado, mas não será modificado.** Cada nova versão exige análise e testes próprios.
+
+O cliente AMD assinado do Adrenalin 26.11.2 testado sem a falha tem SHA-256:
+
+`BC31696C0CA9361C55BB5FF34BF28E327FEF1ECD4C22C87A0852E66BF4C0CD28`
+
+Esse hash é reconhecido **somente para diagnóstico e recuperação do serviço AMD**, nunca para modificar seu código.
 
 ## Compilar a partir do código-fonte
 

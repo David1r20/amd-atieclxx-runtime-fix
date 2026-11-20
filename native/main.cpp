@@ -34,6 +34,9 @@
 static const wchar_t* SERVICE=L"AMD External Events Utility";
 static const wchar_t* TASK=L"AMD-atieclxx-NativeFix";
 static const wchar_t* EXPECTED_HASH=L"046C13260AEA96D5B432A40A407F2D4B94D5333B9BDA2AA6E1B381C15D03B066";
+// Official AMD 26.11.2 client: measured with zero process writes for 21.09s without any patch.
+// NEVER add this hash to EXPECTED_HASH: no code modification is needed.
+static const wchar_t* AMD_26112_HASH=L"BC31696C0CA9361C55BB5FF34BF28E327FEF1ECD4C22C87A0852E66BF4C0CD28";
 static const DWORD RVA=0x21122;
 static const BYTE OLD_BYTES[6]={0xFF,0x15,0x78,0xA5,0x04,0x00};
 static const BYTE NEW_BYTES[6]={0xB8,0x01,0,0,0,0x90};
@@ -49,7 +52,7 @@ static const COLORREF WHITE=RGB(239,245,249),MUTED=RGB(158,176,188),ACCENT=RGB(1
 static const COLORREF WARN=RGB(241,188,110),RED=RGB(245,153,150);
 struct State {
  std::wstring file,hash,version,serviceMode;
- bool validAMD=false, supported=false, exists=false, installed=false, legacy=false, serviceKnown=false, serviceRunning=false;
+ bool validAMD=false, supported=false, official26112=false, exists=false, installed=false, legacy=false, serviceKnown=false, serviceRunning=false;
  DWORD pid=0; bool processMeasured=false,diskMeasured=false,historical=false;
  double processMBps=0,diskMBps=0; bool unsafe=false;
  std::wstring note, message;
@@ -207,6 +210,7 @@ static State Inspect(bool doSample){
  st.hash=Sha256(st.file);st.version=StrVersion(st.file);
  st.validAMD=IsVendorSigned(st.file);
  st.supported=st.validAMD&&_wcsicmp(st.hash.c_str(),EXPECTED_HASH)==0;
+ st.official26112=st.validAMD&&_wcsicmp(st.hash.c_str(),AMD_26112_HASH)==0;
  DWORD mode=0;st.serviceKnown=QueryServiceState(st.serviceRunning,mode);
  st.serviceMode=!st.serviceKnown?L"Indisponível":mode==SERVICE_AUTO_START?L"Automático":mode==SERVICE_DISABLED?L"Desativado":L"Manual";
  st.pid=FindPID(L"atieclxx.exe");
@@ -216,10 +220,20 @@ static State Inspect(bool doSample){
   st.processMeasured=Measure(st.pid,3000,st.processMBps,st.diskMBps,st.diskMeasured);
  }
  if(!st.serviceKnown)st.message=L"Não foi possível consultar o estado real do serviço AMD.";
- else if(!st.serviceRunning)st.message=st.installed||st.legacy?L"Monitor registrado, mas o serviço AMD está parado; proteção indisponível.":L"O serviço está parado. Um teste opcional pode verificar a falha original.";
+ else if(!st.serviceRunning)st.message=st.official26112&&!st.installed&&!st.legacy
+   ?L"Driver AMD 26.11.2 reconhecido. É possível restaurar o serviço e verificar a correção oficial."
+   :st.installed||st.legacy?L"Monitor registrado, mas o serviço AMD está parado; proteção indisponível."
+   :L"O serviço está parado. Um teste opcional pode verificar a falha original.";
  else if(!st.pid)st.message=L"Serviço em execução, mas o processo AMD ainda não foi localizado.";
+ else if(st.official26112&&st.processMeasured&&st.processMBps<0.15)
+    st.message=st.installed||st.legacy
+      ?L"Correção oficial sem escrita repetitiva; monitor antigo pode ser removido."
+      :L"Correção oficial AMD verificada nesta amostra. Nosso patch não é necessário.";
  else if(st.installed||st.legacy)st.message=st.processMeasured&&st.processMBps<0.15?L"Serviço AMD em execução e sem escrita repetitiva na amostra.":L"Monitor registrado; confirme se a escrita repetitiva foi eliminada.";
- else if(st.processMeasured&&st.processMBps>=0.15)st.message=st.supported?L"Gravações excessivas detectadas. Correção disponível.":L"Gravações excessivas detectadas. SHA ainda sem patch validado.";
+ else if(st.processMeasured&&st.processMBps>=0.15)st.message=st.official26112
+   ?L"Escrita excessiva detectada também com o driver oficial; não aplique patch antigo."
+   :st.supported?L"Gravações excessivas detectadas. Correção disponível."
+   :L"Gravações excessivas detectadas. SHA ainda sem patch validado.";
  else if(st.processMeasured)st.message=L"Sem gravações excessivas na amostra.";
  else st.message=L"Processo ativo, porém não foi possível medir o I/O.";
  return st;
@@ -497,6 +511,65 @@ static bool DisableProtection(){
  ClearWatchStatus();
  return ok; // Keep native exe and logs; no Windows uninstaller needed.
 }
+// Restores AMD's own service on an explicitly verified official client SHA.
+// This does NOT register our patch or a SYSTEM watcher.
+static int RestoreOfficialService(){
+ if(!IsAdmin())return 30;
+ State st=Inspect(false);
+ if(!st.official26112||!st.serviceKnown||st.installed||st.legacy)return 31;
+ bool running=false;DWORD priorMode=0;
+ if(!QueryServiceState(running,priorMode))return 32;
+ if(running)return 33;
+ bool changed=false,started=false;
+ int failure=34;
+ do{
+  if(priorMode==SERVICE_DISABLED){
+   if(!SetStart(SERVICE_DEMAND_START))break;
+   changed=true;
+  }
+  if(!StartAMD())break;
+  started=true;
+  DWORD pid=0;
+  for(int i=0;i<40;i++){
+   pid=FindPID(L"atieclxx.exe");
+   if(pid)break;
+   Sleep(150);
+  }
+  if(!pid)break;
+  // 3 independent samples, no patch, 15 seconds total.
+  bool quiet=true;
+  for(int i=0;i<3;i++){
+   double rate=0,diskRate=0;bool diskMeasured=false;
+   if(!Measure(pid,5000,rate,diskRate,diskMeasured)||rate>0.05){
+    quiet=false;break;
+   }
+   if(FindPID(L"atieclxx.exe")!=pid){quiet=false;break;}
+  }
+  if(!quiet){failure=35;break;}
+  if(!SetStart(SERVICE_AUTO_START)){failure=36;break;}
+  bool nowRunning=false;DWORD nowMode=0;
+  if(!QueryServiceState(nowRunning,nowMode)||!nowRunning||nowMode!=SERVICE_AUTO_START){
+   failure=37;break;
+  }
+  return 0;
+ }while(false);
+ // If official driver behaves unexpectedly, restore exactly the initial disabled/manual mode.
+ if(started)StopAMD();
+ if(changed)SetStart(priorMode);
+ return failure;
+}
+static const wchar_t* RestoreErrorText(int code){
+ switch(code){
+ case 30:return L"São necessários privilégios de administrador.";
+ case 31:return L"O driver não corresponde ao 26.11.2 validado ou há um monitor instalado.";
+ case 32:return L"Não foi possível consultar o serviço AMD.";
+ case 33:return L"O serviço AMD já está funcionando.";
+ case 35:return L"O processo apresentou gravações excessivas ou não respondeu durante a medição.";
+ case 36:return L"Não foi possível habilitar a inicialização automática do serviço AMD.";
+ case 37:return L"O serviço AMD não permaneceu em execução.";
+ default:return L"Não foi possível restaurar o serviço; o estado anterior foi preservado.";
+ }
+}
 static bool TemporaryTest(double& pRate,double& dRate,bool& dMeasured){
  if(!IsAdmin()||CheckLegacyMonitor()||TaskExists()||CheckOwnMonitor())return false;
  State st=Inspect(false);if(!st.validAMD)return false;
@@ -574,7 +647,9 @@ static void StartWorker(bool temp){
  InvalidateRect(gWnd,nullptr,TRUE);
 }
 static int RunElevated(const std::wstring& cmd){
- if(IsAdmin())return cmd==L"--enable"?(EnableProtection()?0:gActivationCode):cmd==L"--disable"?(DisableProtection()?0:1):1;
+ if(IsAdmin())return cmd==L"--enable"?(EnableProtection()?0:gActivationCode):
+   cmd==L"--restore-service"?RestoreOfficialService():
+   cmd==L"--disable"?(DisableProtection()?0:1):1;
  std::wstring path=GetSelfPath();SHELLEXECUTEINFOW s{};s.cbSize=sizeof(s);s.fMask=SEE_MASK_NOCLOSEPROCESS;
  s.lpVerb=L"runas";s.lpFile=path.c_str();s.lpParameters=cmd.c_str();s.nShow=SW_HIDE;
  if(!ShellExecuteExW(&s))return 2;
@@ -609,13 +684,17 @@ static void PaintWindow(HDC dc,RECT client){
  }else if(!gState.serviceKnown){
   title=L"Estado do serviço indisponível";detail=gState.message;tone=WARN;
  }else if(!gState.serviceRunning){
-  title=gState.installed||gState.legacy?L"Proteção indisponível — serviço parado":L"Serviço AMD parado";
+  title=gState.installed||gState.legacy?L"Proteção indisponível — serviço parado":
+         gState.official26112?L"Adrenalin 26.11.2 reconhecido":L"Serviço AMD parado";
   detail=(!gState.installed&&!gState.legacy&&gState.supported)
     ?L"Você pode ativar a proteção agora. O teste sem proteção é opcional."
     :gState.message;
-  tone=WARN;
+  tone=gState.official26112&&!gState.installed&&!gState.legacy?ACCENT:WARN;
  }else if(!gState.pid){
   title=L"Serviço em execução; cliente não detectado";detail=gState.message;tone=WARN;
+ }else if(gState.official26112 && gState.processMeasured && gState.processMBps<0.15){
+  title=L"Correção oficial AMD funcionando";
+  detail=gState.message;tone=ACCENT;
  }else if(gState.legacy||gState.installed){
   title=gState.processMeasured&&gState.processMBps<0.15?L"Proteção ativa — serviço funcionando":L"Proteção registrada — verificar gravações";
   detail=gState.message;tone=gState.processMeasured&&gState.processMBps<0.15?ACCENT:WARN;
@@ -636,13 +715,15 @@ static void PaintWindow(HDC dc,RECT client){
  else wcscpy_s(val,L"—");
  if(gState.diskMeasured)swprintf_s(disk,L"%.3f MB/s",gState.diskMBps);
  else wcscpy_s(disk,L"—");
- metric(0,L"DRIVER AMD",gState.supported?L"Compatível":gState.validAMD?L"Outra versão":L"—",gState.version.empty()?L"Identidade":gState.version,gState.supported?ACCENT:WARN);
+ metric(0,L"DRIVER AMD",gState.official26112?L"26.11.2":gState.supported?L"Compatível":gState.validAMD?L"Outra versão":L"—",gState.version.empty()?L"Identidade":gState.version,(gState.official26112||gState.supported)?ACCENT:WARN);
  metric(1,L"PROCESSO AMD",val,gState.historical?L"Teste SEM proteção (5 s)":L"Gravações do processo",gState.processMeasured&&gState.processMBps>=0.15?RED:WHITE);
  metric(2,L"DISCO C: TOTAL",disk,L"Todos os processos",WHITE);
  metric(3,L"SERVIÇO AMD",!gState.serviceKnown?L"Indisponível":gState.serviceRunning?L"Em execução":L"Parado",gState.serviceMode,gState.serviceRunning?ACCENT:WARN);
  RECT r{28,398,client.right-28,475};FillRounded(dc,r,RGB(18,27,36),12);
  PaintLabel(dc,{44,405,client.right-40,431},L"Como funciona",gFont,WHITE);
- PaintLabel(dc,{44,433,client.right-43,468},L"Verifica as gravações do processo AMD. A correção só é ativada em versões compatíveis.",gFontSmall,MUTED);
+ PaintLabel(dc,{44,433,client.right-43,468},
+   gState.official26112?L"Driver AMD atualizado. Nosso patch não é necessário nesta versão."
+     :L"Verifica gravações do AMD. Aplica o patch apenas em versões validadas.",gFontSmall,MUTED);
  if(gState.hash.size()>0){
   std::wstring shortened=gState.hash.substr(0,22)+L"...";
   PaintLabel(dc,{30,486,client.right-30,510},L"SHA-256 do cliente: "+shortened,gFontSmall,MUTED);
@@ -654,6 +735,10 @@ static void PaintWindow(HDC dc,RECT client){
 // without protection. EnableProtection() performs its own safety validation.
 static bool CanActivateProtection(const State& st){
  return st.supported&&st.serviceKnown&&!st.installed&&!st.legacy;
+}
+static bool CanRestoreOfficialService(const State& st){
+ return st.official26112&&st.validAMD&&st.serviceKnown&&!st.serviceRunning
+    &&!st.installed&&!st.legacy&&!st.pid;
 }
 static bool CanTemporaryDiagnose(const State& st){
  return st.validAMD&&st.serviceKnown&&!st.serviceRunning&&!st.pid&&!st.legacy&&!st.installed;
@@ -675,6 +760,13 @@ static bool TestUiRules(){
  if(CanActivateProtection(candidate)||!CanTemporaryDiagnose(candidate))return false;
  candidate.supported=true;candidate.serviceKnown=false;
  if(CanActivateProtection(candidate))return false;
+ candidate.serviceKnown=true;candidate.official26112=true;candidate.supported=false;
+ candidate.serviceRunning=false;candidate.pid=0;
+ if(!CanRestoreOfficialService(candidate)||CanActivateProtection(candidate))return false;
+ candidate.serviceRunning=true;
+ if(CanRestoreOfficialService(candidate))return false;
+ candidate.serviceRunning=false;candidate.installed=true;
+ if(CanRestoreOfficialService(candidate))return false;
  return true;
 }
 static void SetControls(){
@@ -682,9 +774,10 @@ static void SetControls(){
  bool canTest=!gWorking&&CanTemporaryDiagnose(gState);
  EnableWindow(gTest,canTest);
  ShowWindow(gTest,canTest?SW_SHOW:SW_HIDE);
- bool canEnable=!gWorking&&CanActivateProtection(gState);
+ bool canEnable=!gWorking&&(CanActivateProtection(gState)||CanRestoreOfficialService(gState));
+ SetWindowTextW(gEnable,gState.official26112?L"Restaurar serviço AMD":L"Ativar proteção");
  EnableWindow(gEnable,canEnable);
- ShowWindow(gEnable,gState.installed||gState.legacy?SW_HIDE:SW_SHOW);
+ ShowWindow(gEnable,(gState.installed||gState.legacy||(gState.official26112&&!CanRestoreOfficialService(gState)))?SW_HIDE:SW_SHOW);
  bool canDisable=!gWorking&&gState.installed;
  EnableWindow(gDisable,canDisable);
  ShowWindow(gDisable,gState.installed?SW_SHOW:SW_HIDE);
@@ -730,7 +823,17 @@ static LRESULT CALLBACK WndProc(HWND w,UINT msg,WPARAM wp,LPARAM lp){
    else if(LOWORD(wp)==ID_TEST){
     if(MessageBoxW(w,L"Este teste reproduz o funcionamento ORIGINAL, SEM proteção. Ele pode causar gravações no SSD durante cerca de cinco segundos.\n\nNão significa que a correção continua gravando. Depois, o serviço AMD voltará ao estado anterior.\n\nDeseja realizar o teste?",L"Teste temporário sem proteção",MB_YESNO|MB_ICONQUESTION)==IDYES)StartWorker(true);
    }else if(LOWORD(wp)==ID_ENABLE){
-    if(MessageBoxW(w,L"A ativação não exige executar o teste sem proteção.\n\nO programa iniciará o monitor, verificará o serviço AMD e medirá se a escrita repetitiva foi eliminada. Se falhar, interromperá o serviço por segurança.\n\nAtivar proteção?",L"Confirmação",MB_YESNO|MB_ICONWARNING)==IDYES){
+    if(CanRestoreOfficialService(gState)){
+     if(MessageBoxW(w,L"O Adrenalin 26.11.2 foi identificado e não apresentou autocópia em testes anteriores.\n\nO aplicativo iniciará o serviço AMD sem patch, medirá gravações em três amostras e, se estiver normal, restaurará a inicialização automática. Se houver escrita excessiva, interromperá o serviço.\n\nRestaurar o serviço AMD?",L"Restaurar serviço AMD",MB_YESNO|MB_ICONQUESTION)==IDYES){
+      int code=RunElevated(L"--restore-service");
+      if(code!=0){
+       std::wstring msg=L"Não foi possível restaurar o serviço AMD.\n\n"+
+         std::wstring(RestoreErrorText(code))+L"\n\nCódigo: "+std::to_wstring(code);
+       MessageBoxW(w,msg.c_str(),L"Restauração não concluída",MB_OK|MB_ICONWARNING);
+      }
+      StartWorker(false);
+     }
+    }else if(MessageBoxW(w,L"A ativação não exige executar o teste sem proteção.\n\nO programa iniciará o monitor, verificará o serviço AMD e medirá se a escrita repetitiva foi eliminada. Se falhar, interromperá o serviço por segurança.\n\nAtivar proteção?",L"Confirmação",MB_YESNO|MB_ICONWARNING)==IDYES){
      int result=RunElevated(L"--enable");
      if(result!=0){
       std::wstring message=L"A proteção não foi ativada.\n\n"+std::wstring(ActivationErrorText(result))+
@@ -781,6 +884,7 @@ int APIENTRY wWinMain(HINSTANCE h,HINSTANCE,LPWSTR args,int show){
  if(arg==L"--selftest-ui")return TestUiRules()?0:1;
  if(arg==L"--watch")return Watch()?0:1;
  if(arg==L"--enable")return EnableProtection()?0:gActivationCode;
+ if(arg==L"--restore-service")return RestoreOfficialService();
  if(arg==L"--disable")return DisableProtection()?0:1;
  if(arg==L"--once")return Apply()?0:1;
  if(arg.rfind(L"--temporary-test ",0)==0){

@@ -33,7 +33,7 @@ Na raiz do repositório:
 
 O ambiente de desenvolvimento precisa do Visual Studio C++ Build Tools e Windows SDK. A compilação utiliza `/MT` para vinculação estática do runtime C.
 
-Saída: `dist-native\AMD-atieclxx-Fix-Native.exe`. O executável validado ocupa aproximadamente 274 KB.
+Saída: `dist-native\AMD-atieclxx-Fix-Native.exe`. O executável validado ocupa aproximadamente 300 KB.
 
 ## Documentação
 
@@ -57,3 +57,11 @@ A interface elevada não tenta mais escrever diretamente na memória do cliente 
 Na ativação, o aplicativo aguarda a confirmação do PID atual. Somente depois mede o I/O do processo e confirma o estado do serviço e da tarefa. Falhas provocam reversão conservadora. Isso evita que restrições de acesso da interface administrativa interrompam uma correção aplicada corretamente pelo monitor SYSTEM.
 
 Validação: ativação com serviço inicialmente desativado, zero bytes de escrita em dez segundos, reinício do serviço com novo PID confirmado e zero bytes de escrita em mais oito segundos.
+
+
+
+## Driver oficial 26.11.2
+
+O cliente AMD com SHA-256 `BC31696C0CA9361C55BB5FF34BF28E327FEF1ECD4C22C87A0852E66BF4C0CD28` foi verificado no Adrenalin 26.11.2 com 0 bytes de escrita do processo em 21,09 segundos sem patch. **Esse hash nunca recebe alteração em memória.**
+
+O comando `--restore-service`, acessível no botão **Restaurar serviço AMD**, exige direitos administrativos, assinatura AMD válida, o hash exato identificado, serviço inicialmente parado e ausência de monitor. Ele inicia o serviço sem patch, mede três amostras de cinco segundos e só muda a inicialização para `Automatic` se a escrita permanecer abaixo de 0,05 MB/s. Falhas provocam a interrupção do serviço e a restauração da inicialização anterior. A implementação mantém o SHA antigo do patch isolado dessa classificação.

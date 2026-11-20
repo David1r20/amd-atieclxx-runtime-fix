@@ -84,3 +84,21 @@ Testes na mesma máquina:
 - A assinatura e o SHA-256 do executável original permaneceram inalterados.
 
 A causa exata da falha na chamada anterior não foi isolada por API, mas o erro registrado foi de acesso negado e o novo fluxo elimina a necessidade de modificação pela interface.
+
+
+
+## Adrenalin 26.11.2 WHQL — 20/11/2026
+
+**Ambiente:** Radeon RX 9070 XT, driver `32.0.32029.2010`, novo cliente `atieclxx.exe` assinado, 677.528 bytes, SHA-256 `BC31696C0CA9361C55BB5FF34BF28E327FEF1ECD4C22C87A0852E66BF4C0CD28`.
+
+O serviço estava inicialmente `Stopped / Disabled`, sem monitor registrado. A rotina de teste iniciou o serviço sem patch, mediu três amostras e restaurou o estado inicial:
+
+| Amostra sem patch | Duração | Escrita do processo |
+|---|---:|---:|
+| 1 | 7,03 s | 0 bytes |
+| 2 | 7,03 s | 0 bytes |
+| 3 | 7,03 s | 0 bytes |
+
+A cópia antiga em `systemprofile\AppData\Local\AMD\atieclxx.exe` preservou o hash e a data de modificação. Em seguida, o comando `--restore-service` ativou o serviço sem patch, mediu três intervalos de cinco segundos e confirmou `Running / Auto`. Mais 15 segundos de observação registraram 0 bytes de escrita, com o monitor ausente e a cópia inalterada.
+
+**Conclusão:** a autocópia não se reproduziu no driver 26.11.2 testado. O hash novo serve somente para identificar a correção oficial, não para aplicar nosso patch. Ainda faltam testes após reinicialização e sessões prolongadas.

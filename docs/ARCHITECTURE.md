@@ -77,3 +77,11 @@ A aplicação da alteração em RAM ocorre no monitor registrado como `SYSTEM`. 
 A ativação iniciada pela interface aguarda esse sinal do monitor, valida a taxa de escrita do processo e verifica que o serviço e a tarefa continuam em execução. A interface **não precisa** abrir o processo AMD para modificar sua memória. Se o monitor não confirmar a correção, a ativação falha e restaura o estado seguro de serviço desativado.
 
 O arquivo de confirmação é um mecanismo local de coordenação; ele não substitui a validação do hash, dos opcodes nem dos contadores de I/O.
+
+
+
+## Reconhecimento da correção oficial AMD
+
+A classificação de SHA-256 separa duas situações: o binário antigo com patch de seis bytes validado e o cliente do Adrenalin 26.11.2 testado sem a falha.
+
+No novo hash, a interface informa que o patch é desnecessário. Se o serviço AMD foi desativado por uma proteção anterior, a rotina `--restore-service` pode iniciá-lo sem monitor, medir três amostras de cinco segundos e recuperar a inicialização automática somente quando não houver gravações excessivas. Assim o aplicativo evita modificar o código de versões corrigidas pela própria AMD.

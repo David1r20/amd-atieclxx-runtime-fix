@@ -65,3 +65,11 @@ Este é um projeto experimental independente, sem vínculo ou suporte oficial da
 A interface só solicita a ativação e verifica o resultado. A escrita dos seis bytes no processo AMD fica reservada ao monitor `SYSTEM`. Um pequeno arquivo em `ProgramData` comunica o PID e a confirmação ao aplicativo; a taxa de I/O é medida separadamente antes de considerar a ativação bem-sucedida.
 
 Se o monitor não confirmar o patch, a ativação desfaz a tarefa e mantém o serviço AMD desativado para evitar que o comportamento original prossiga sem proteção.
+
+
+
+## Versões corrigidas oficialmente
+
+O cliente AMD 26.11.2 validado com SHA-256 `BC31696C0CA9361C55BB5FF34BF28E327FEF1ECD4C22C87A0852E66BF4C0CD28` não recebe patch. Quando o serviço está parado e não existe monitor, o aplicativo pode oferecer sua restauração com autorização administrativa.
+
+A restauração mede três amostras de cinco segundos **sem modificação de memória** e mantém inicialização automática somente após resultado satisfatório. Em caso de falha, para o serviço e restaura seu modo inicial. O monitor de patch legado continua limitado ao hash antigo, cujo código foi analisado.
